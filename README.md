@@ -47,7 +47,7 @@ kari frieren         # search directly
 kari -d one piece    # English dub
 kari -e 5 frieren    # start at episode 5
 kari -c              # continue watching (history)
-kari -D 1-12 frieren # download episodes 1-12 (see "Download for offline")
+kari -D frieren 1-12 # download episodes 1-12 (see "Download for offline")
 kari -U              # update kari
 kari -h              # all options
 ```
@@ -66,13 +66,17 @@ kari doesn't use your location. Reading it is the standard trick that keeps iSH 
 ## Download for offline
 
 ```sh
-kari -D 5 frieren        # one episode
-kari -D 1-12 frieren     # a range
-kari -D 13- frieren      # episode 13 to the last one
-kari -D all -d frieren   # every episode, dubbed
+kari -D frieren 5        # one episode
+kari -D frieren 1-12     # a range
+kari -D frieren 13-      # episode 13 to the last one
+kari -D -d frieren all   # every episode, dubbed
+kari -D frieren          # pick the season, then type which episodes
+kari -D                  # asks for the anime, season and episodes
 kari -c -D 6-10          # more of an anime from your history
-kari -D 1-3 -o ~/videos frieren   # save somewhere else
+kari -D -o ~/videos frieren 1-3   # save somewhere else
 ```
+
+You always pick the season (AniList lists each season separately) before kari downloads. The episodes go after the title; if a title itself ends in a number, put it in quotes: `kari -D "mob psycho 100" 3`.
 
 Each episode is saved as `<title> - Episode 05 (sub).mkv`, with the subtitles inside the file. A 24-minute episode is about 180-250 MB.
 

@@ -6,7 +6,7 @@
 # VLC for iOS cannot send the Referer header the CDN requires, so on iSH the
 # stream is played through a tiny local proxy (busybox nc + a shell handler) that adds it.
 
-version_number="1.4.0"
+version_number="1.4.1"
 
 # ---------- configuration (override with environment variables) ----------
 mode="${KARI_MODE:-sub}"                    # sub | dub
@@ -73,7 +73,7 @@ dep_check() {
     for d in curl jq openssl base64 sed awk grep; do
         has "$d" || die "Missing dependency: $d  (on iSH: apk add curl jq openssl)"
     done
-    if [ "$player" = "iSH" ] && [ -z "$download_eps" ]; then
+    if [ "$player" = "iSH" ] && [ -z "$download" ]; then
         nc_cmd >/dev/null || die "Missing busybox nc with -e  (on iSH: apk add busybox)"
     fi
 }
@@ -622,6 +622,17 @@ play_and_pause() {
 # kept in $cache_dir/dl until the episode is complete, so an interrupted
 # download continues where it stopped.
 
+# Whether ARG is an episode spec: N, N-M, N- or all.
+is_episode_spec() { # ARG
+    [ "$1" = all ] && return 0
+    case "$1" in
+        *-*) _sa=${1%%-*} _sb=${1#*-} ;;
+        *) _sa=$1 _sb="" ;;
+    esac
+    case "$_sa" in '' | *[!0-9]*) return 1 ;; esac
+    case "$_sb" in *[!0-9]*) return 1 ;; esac
+}
+
 # Episode numbers for SPEC: N, N-M, N- (to the last episode) or all.
 episode_range() { # SPEC
     case "$1" in
@@ -783,7 +794,8 @@ Options:
   -d, --dub             play the English dub
   -e, --episode N       start at episode N
   -q, --quality Q       best | worst | 1080 | 720 | 480 | 360
-  -D, --download EPS    download episodes instead of playing: N, N-M, N- or all
+  -D, --download        download instead of playing; episodes after the title
+                        (N, N-M, N- or all) or asked for, e.g. kari -D frieren 1-12
   -o, --output DIR      download folder (default: VLC's folder at /mnt/vlc on iSH)
   -s, --sub-lang LANG   subtitle language label (default: English, "none" to disable)
   -p, --player P        iSH | mpv | vlc | link  (default: auto)
@@ -803,7 +815,8 @@ EOF
 # ---------- main ----------
 trap cleanup EXIT
 trap 'exit 1' INT TERM HUP
-query="" start_ep="" do_continue="" download_eps="" dl_dir="${KARI_DOWNLOAD_DIR:-}"
+query="" start_ep="" do_continue="" download="" download_eps="" dl_dir="${KARI_DOWNLOAD_DIR:-}"
+nargs=0 last_arg=""
 while [ $# -gt 0 ]; do
     case "$1" in
         -c | --continue) do_continue=1 ;;
@@ -812,7 +825,7 @@ while [ $# -gt 0 ]; do
         -q | --quality) [ -n "$2" ] || die "-q needs a value"; quality="$2"; shift ;;
         -s | --sub-lang) [ -n "$2" ] || die "-s needs a value"; sub_lang="$2"; shift ;;
         -p | --player) [ -n "$2" ] || die "-p needs a value"; player="$2"; shift ;;
-        -D | --download) [ -n "$2" ] || die "--download needs episodes (N, N-M, N- or all)"; download_eps="$2"; shift ;;
+        -D | --download) download=1 ;;
         -o | --output) [ -n "$2" ] || die "-o needs a folder"; dl_dir="$2"; shift ;;
         --delete-history) rm -f "$hist_file"; info "History deleted."; exit 0 ;;
         -U | --update) update_script ;;
@@ -820,7 +833,10 @@ while [ $# -gt 0 ]; do
         --test-proxy) test_proxy ;;
         -h | --help) usage; exit 0 ;;
         -*) die "Unknown option: $1 (see kari -h)" ;;
-        *) query="${query:+$query }$1" ;;
+        *)
+            query="${query:+$query }$1"
+            nargs=$((nargs + 1)) last_arg="$1"
+            ;;
     esac
     shift
 done
@@ -828,15 +844,28 @@ done
 detect_player
 dep_check
 
+# kari -D TITLE [EPISODES]: the episodes are the last word; a title on its own,
+# even a number like "86", is searched.
+if [ -n "$download" ]; then
+    if [ -n "$do_continue" ]; then download_eps="$query"; query=""
+    elif [ $nargs -ge 2 ] && is_episode_spec "$last_arg"; then download_eps="$last_arg"; query="${query%" $last_arg"}"
+    fi
+fi
+
 if [ -n "$do_continue" ]; then
     continue_history
 else
     search_and_pick
-    if [ -n "$download_eps" ]; then :
+    if [ -n "$download" ]; then :
     elif [ -n "$start_ep" ]; then ep="$start_ep"; else select_episode || exit 0; fi
 fi
 
-if [ -n "$download_eps" ]; then
+if [ -n "$download" ]; then
+    if [ -z "$download_eps" ]; then
+        _range="1-$ep_count"; [ "$ep_count" -gt 0 ] || _range="?"
+        download_eps=$(prompt "Episodes to download ($_range; e.g. 3, 1-12, 5- or all): ")
+        [ -z "$download_eps" ] && exit 0
+    fi
     if [ -z "$dl_dir" ]; then
         if [ "$player" = "iSH" ]; then dl_dir=/mnt/vlc; else dl_dir="$HOME/Downloads/kari"; fi
     fi

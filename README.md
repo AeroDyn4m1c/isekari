@@ -122,6 +122,8 @@ Set these as environment variables, e.g. in `~/.profile`:
 | `KARI_NO_KEEPALIVE` | | set to skip the location background trick |
 | `KARI_AHEAD` | `20` | how many segments (a few seconds each) to buffer ahead of VLC |
 | `KARI_DOWNLOAD_DIR` | `/mnt/vlc` on iSH | where `-D` saves episodes |
+| `KARI_DL_PARALLEL` | `4` | pieces downloaded at once by `-D` (`1` = one at a time) |
+| `KARI_DL_CHACHA` | `1` | `0` turns off the faster ChaCha20 encryption for `-D` |
 | `KARI_DEBUG` | | set to show how long each step takes |
 
 History is stored in `~/.local/state/kari/history`.

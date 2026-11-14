@@ -6,7 +6,7 @@
 # VLC for iOS cannot send the Referer header the CDN requires, so on iSH the
 # stream is played through a tiny local proxy (busybox nc + a shell handler) that adds it.
 
-version_number="1.4.1"
+version_number="1.5.0"
 
 # ---------- configuration (override with environment variables) ----------
 mode="${KARI_MODE:-sub}"                    # sub | dub
@@ -633,6 +633,26 @@ is_episode_spec() { # ARG
     case "$_sb" in *[!0-9]*) return 1 ;; esac
 }
 
+# Download tuning. iSH emulates the CPU, so HTTPS decryption is what limits the
+# speed: ChaCha20 is much cheaper than AES without AES hardware support, and a few
+# parallel transfers keep the CPU busy while others wait on the network.
+dl_parallel="${KARI_DL_PARALLEL:-4}"          # transfers at once (1 = one at a time)
+dl_tls=""                                     # set by check_dl_tls
+dl_tls_checked=""
+
+# Use ChaCha20 (unless KARI_DL_CHACHA=0) if the CDN accepts it; tried once per run on URL.
+check_dl_tls() { # URL
+    [ -n "$dl_tls_checked" ] && return
+    dl_tls_checked=1
+    [ "${KARI_DL_CHACHA:-1}" = 0 ] && return
+    _t="--ciphers ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305 --tls13-ciphers TLS_CHACHA20_POLY1305_SHA256"
+    if curl -sf -r 0-0 -o /dev/null --connect-timeout 15 --max-time 30 $_t -A "$agent" -e "$stream_ref" "$1"; then
+        dl_tls="$_t"
+    else
+        info "Note: the video server refused the faster ChaCha20 encryption; using the default."
+    fi
+}
+
 # Episode numbers for SPEC: N, N-M, N- (to the last episode) or all.
 episode_range() { # SPEC
     case "$1" in
@@ -670,6 +690,7 @@ download_episode() { # EP
     _name=$(printf '%s - Episode %02d (%s)' "$title" "$1" "$mode" | sed 's#[/\\:*?"<>|]#-#g')
     _out="$dl_dir/$_name"
     if [ -s "$_out.mkv" ] || [ -s "$_out.ts" ]; then info "Already downloaded: $_name"; return 0; fi
+    t0=$(date +%s)
     resolve_episode "$mal_id" "$1" "$mode" || return 1
     load_variant || return 1
     _w="$cache_dir/dl/$mal_id-$1-$mode"
@@ -681,34 +702,65 @@ download_episode() { # EP
         { print dir "/" $0 }' >"$_w/urls"
     _n=$(wc -l <"$_w/urls")
     [ "$_n" -gt 0 ] || { info "Playlist has no segments."; return 1; }
-    # download missing segments in batches over one connection; a few passes for failures
+    check_dl_tls "$(head -n 1 "$_w/urls")"
+    _par=""
+    [ "$dl_parallel" -gt 1 ] 2>/dev/null && _par="--parallel --parallel-max $dl_parallel"
+    # download missing segments in batches of 40 (reusing connections); a few passes for failures
+    _t0=$(date +%s) _bytes=0 _rate="" _wait=0 _waited=0
     _pass=0
     while [ $_pass -lt 5 ]; do
-        _i=1 _have=0
+        _i=1
         while [ $_i -le "$_n" ]; do
+            _bs=$_i
             set --
             while [ $_i -le "$_n" ] && [ $# -lt 40 ]; do
-                if [ -s "$_w/$_i.ts" ]; then _have=$((_have + 1))
-                else set -- "$@" "$(sed -n "${_i}p" "$_w/urls")" -o "$_w/$_i.ts.part"; fi
+                [ -s "$_w/$_i.ts" ] || set -- "$@" "$(sed -n "${_i}p" "$_w/urls")" -o "$_w/$_i.ts.part"
                 _i=$((_i + 1))
             done
             [ $# -eq 0 ] && continue
-            curl -sfL --connect-timeout 15 --speed-limit 10000 --speed-time 15 -A "$agent" -e "$stream_ref" \
-                -w '%{stderr}%{exitcode} %{filename_effective}\n' "$@" >/dev/null 2>"$_w/wout"
-            while read -r _rc _f; do
+            curl -sfL $_par $dl_tls --connect-timeout 15 --speed-limit 10000 --speed-time 15 -A "$agent" -e "$stream_ref" \
+                -w '%{stderr}%{exitcode} %{http_code} %{size_download} %{filename_effective}\n' "$@" >/dev/null 2>"$_w/wout"
+            _lim=""
+            while read -r _rc _code _sz _f; do
+                [ "$_code" = 429 ] && _lim=1
                 [ -e "$_f" ] || continue
-                if [ "$_rc" = 0 ] && [ -s "$_f" ]; then mv -f "$_f" "${_f%.part}"; _have=$((_have + 1))
+                if [ "$_rc" = 0 ] && [ -s "$_f" ]; then
+                    mv -f "$_f" "${_f%.part}"
+                    _bytes=$((_bytes + _sz))
                 else rm -f "$_f"; fi
             done <"$_w/wout"
             rm -f "$_w"/*.part
-            printf '\r  %s/%s pieces (%s%%)' "$_have" "$_n" $((_have * 100 / _n)) >&2
+            _have=$(ls "$_w" | grep -c '\.ts$')
+            _el=$(($(date +%s) - _t0))
+            [ "$_el" -gt 0 ] && _rate=$(dl_rate "$_bytes" "$_el")
+            printf '\r  %s/%s pieces (%s%%)%s   ' "$_have" "$_n" $((_have * 100 / _n)) "${_rate:+, $_rate}" >&2
+            if [ -n "$_lim" ]; then
+                # HTTP 429: the server limits how fast pieces may be requested. Slow down
+                # (one transfer at a time from now on), wait longer each time, retry the batch.
+                [ $_waited -ge 900 ] && break 2
+                _wait=$((_wait * 2)); [ $_wait -lt 15 ] && _wait=15; [ $_wait -gt 120 ] && _wait=120
+                dl_parallel=1 _par=""
+                printf '\n' >&2
+                info "  The video server asks kari to slow down; waiting ${_wait}s..."
+                sleep $_wait
+                _waited=$((_waited + _wait)) _i=$_bs
+            else
+                _wait=0 _waited=0
+            fi
         done
         [ "$_have" -ge "$_n" ] && break
+        [ $_waited -ge 900 ] && break
         _pass=$((_pass + 1))
         sleep 3
     done
     printf '\n' >&2
-    [ "$_have" -ge "$_n" ] || { info "Could not download $((_n - _have)) of $_n pieces; run the same command again to continue."; return 1; }
+    _el=$(($(date +%s) - _t0))
+    [ "$_bytes" -gt 0 ] && step "Downloaded $((_bytes / 1048576)) MB in ${_el}s${_rate:+ ($_rate)}"
+    if [ "$_have" -lt "$_n" ]; then
+        [ $_waited -ge 900 ] && info "The video server kept refusing (too many requests). Try again later."
+        info "Could not download $((_n - _have)) of $_n pieces; run the same command again to continue."
+        return 1
+    fi
     _vtt=""
     if [ -n "$sub_url" ]; then
         get -e "$stream_ref" -o "$_w/sub.vtt" "$sub_url" && [ -s "$_w/sub.vtt" ] && _vtt="$_w/sub.vtt"
@@ -727,6 +779,12 @@ download_episode() { # EP
         [ -n "$_vtt" ] && cp "$_vtt" "$_out.vtt"
     fi
     rm -rf "$_w"
+}
+
+# "4.2 MB/s" for BYTES in SECONDS.
+dl_rate() { # BYTES SECONDS
+    _r=$(($1 * 10 / $2 / 1048576))
+    printf '%s.%s MB/s' $((_r / 10)) $((_r % 10))
 }
 
 download_episodes() { # SPEC

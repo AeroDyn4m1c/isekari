@@ -47,6 +47,7 @@ kari frieren         # search directly
 kari -d one piece    # English dub
 kari -e 5 frieren    # start at episode 5
 kari -c              # continue watching (history)
+kari -D 1-12 frieren # download episodes 1-12 (see "Download for offline")
 kari -U              # update kari
 kari -h              # all options
 ```
@@ -61,6 +62,31 @@ kari -h              # all options
 The first time you play something, iOS asks whether **iSH** may use your location. Choose **Allow While Using App** (or **Always**).
 
 kari doesn't use your location. Reading it is the standard trick that keeps iSH running in the background, and iSH needs to keep running while you watch (see below). If you say no, playback stops after a few seconds once VLC is in front.
+
+## Download for offline
+
+```sh
+kari -D 5 frieren        # one episode
+kari -D 1-12 frieren     # a range
+kari -D 13- frieren      # episode 13 to the last one
+kari -D all -d frieren   # every episode, dubbed
+kari -c -D 6-10          # more of an anime from your history
+kari -D 1-3 -o ~/videos frieren   # save somewhere else
+```
+
+Each episode is saved as `<title> - Episode 05 (sub).mkv`, with the subtitles inside the file. A 24-minute episode is about 180-250 MB.
+
+**One-time setup: connect VLC's folder to iSH.** Downloads go to `/mnt/vlc`, which kari expects to be VLC's own folder, so they show up straight in VLC's library:
+
+```sh
+mkdir -p /mnt/vlc && mount -t ios . /mnt/vlc
+```
+
+In the window that opens, pick **On My iPhone** (or **On My iPad**) › **VLC**. iSH may forget this after it restarts; kari tells you when to run the `mount` line again.
+
+**For .mkv files, install ffmpeg once:** `apk add ffmpeg` (about 100 MB). Without it, kari saves a `.ts` video with a separate `.vtt` subtitle file next to it.
+
+Downloading needs iSH to keep running, like playing does: keep it open, or allow location access (see above) and switch to other apps. If a download is interrupted, run the same command again: it continues where it stopped, and skips episodes that are already saved.
 
 ## How it works
 
@@ -90,7 +116,8 @@ Set these as environment variables, e.g. in `~/.profile`:
 | `KARI_PLAYER` | auto | `iSH`, `mpv`, `vlc`, or `link` (just print the stream URL) |
 | `KARI_NO_FZF` | | set to use a numbered menu instead of fzf |
 | `KARI_NO_KEEPALIVE` | | set to skip the location background trick |
-| `KARI_AHEAD` | `8` | how many segments (~10 s each) to buffer ahead of VLC |
+| `KARI_AHEAD` | `20` | how many segments (a few seconds each) to buffer ahead of VLC |
+| `KARI_DOWNLOAD_DIR` | `/mnt/vlc` on iSH | where `-D` saves episodes |
 | `KARI_DEBUG` | | set to show how long each step takes |
 
 History is stored in `~/.local/state/kari/history`.

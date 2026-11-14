@@ -6,7 +6,7 @@
 # VLC for iOS cannot send the Referer header the CDN requires, so on iSH the
 # stream is played through a tiny local proxy (busybox nc + a shell handler) that adds it.
 
-version_number="1.3.1"
+version_number="1.4.0"
 
 # ---------- configuration (override with environment variables) ----------
 mode="${KARI_MODE:-sub}"                    # sub | dub
@@ -73,7 +73,7 @@ dep_check() {
     for d in curl jq openssl base64 sed awk grep; do
         has "$d" || die "Missing dependency: $d  (on iSH: apk add curl jq openssl)"
     done
-    if [ "$player" = "iSH" ]; then
+    if [ "$player" = "iSH" ] && [ -z "$download_eps" ]; then
         nc_cmd >/dev/null || die "Missing busybox nc with -e  (on iSH: apk add busybox)"
     fi
 }
@@ -378,14 +378,9 @@ pick_variant() { # MASTER_TEXT
         }'
 }
 
-# Build a local playlist whose segments/keys go through the proxy, start the
-# prefetcher and check that the first segment really comes through.
-# Sets local_url, local_sub.
-prepare_local() {
-    start_proxy
-    stop_prefetch
-    _id=$(date +%s)
-    local_url="" local_sub=""
+# Fetch the media playlist of $stream_url in the chosen quality.
+# Sets _m (playlist text), _purl (its URL), _origin and _dir (for relative URIs).
+load_variant() {
     step "Loading playlist..."
     _m=$(get -e "$stream_ref" "$stream_url") || { info "Could not fetch playlist."; return 1; }
     printf '%s' "$_m" | grep -q '#EXTM3U' || { info "Stream did not return a playlist."; return 1; }
@@ -397,6 +392,17 @@ prepare_local() {
     fi
     _origin=$(printf '%s' "$_purl" | sed -E 's#^(https?://[^/]+).*#\1#')
     _dir=$(printf '%s' "${_purl%%\?*}" | sed 's#/[^/]*$##')
+}
+
+# Build a local playlist whose segments/keys go through the proxy, start the
+# prefetcher and check that the first segment really comes through.
+# Sets local_url, local_sub.
+prepare_local() {
+    start_proxy
+    stop_prefetch
+    _id=$(date +%s)
+    local_url="" local_sub=""
+    load_variant || return 1
     # drop older episodes' files
     for _old in "$www"/[0-9]*.urls; do
         [ -e "$_old" ] || continue
@@ -610,6 +616,124 @@ play_and_pause() {
     read -r _ </dev/tty
 }
 
+# ---------- download ----------
+# Episodes are saved as "<title> - Episode NN (sub|dub).mkv" with the subtitles
+# inside (ffmpeg), or as .ts + .vtt when ffmpeg isn't installed. Segments are
+# kept in $cache_dir/dl until the episode is complete, so an interrupted
+# download continues where it stopped.
+
+# Episode numbers for SPEC: N, N-M, N- (to the last episode) or all.
+episode_range() { # SPEC
+    case "$1" in
+        all) _ra=1 _rb=$ep_count ;;
+        *-*) _ra=${1%%-*} _rb=${1#*-}; [ -z "$_rb" ] && _rb=$ep_count ;;
+        *) _ra=$1 _rb=$1 ;;
+    esac
+    case "$_ra$_rb" in '' | *[!0-9]*) die "Episodes must be N, N-M, N- or all (got \"$1\")." ;; esac
+    [ "$_rb" -gt 0 ] || die "Episode count unknown; give the episodes, like 1-12."
+    [ "$_ra" -ge 1 ] && [ "$_ra" -le "$_rb" ] || die "Invalid episode range: $1"
+    [ "$ep_count" -gt 0 ] && [ "$_rb" -gt "$ep_count" ] && die "$title has $ep_count episodes."
+    seq "$_ra" "$_rb"
+}
+
+check_download_dir() {
+    if [ ! -d "$dl_dir" ]; then
+        if [ "$player" = "iSH" ] && [ "$dl_dir" = /mnt/vlc ]; then
+            info "To save downloads into VLC, connect VLC's folder to iSH once:"
+            info "  mkdir -p /mnt/vlc && mount -t ios . /mnt/vlc"
+            info "and pick \"On My iPhone/iPad > VLC\" in the window that opens. Then run kari again."
+            info "(Or save somewhere else with -o FOLDER.)"
+            exit 1
+        fi
+        mkdir -p "$dl_dir" || die "Could not create $dl_dir"
+    fi
+    if [ "$player" = "iSH" ] && [ "$dl_dir" = /mnt/vlc ] && ! mount 2>/dev/null | grep -q " /mnt/vlc "; then
+        info "/mnt/vlc is not connected to VLC's folder (iSH forgets it after a restart)."
+        info "Run: mount -t ios . /mnt/vlc   and pick \"On My iPhone/iPad > VLC\"."
+        exit 1
+    fi
+    [ -w "$dl_dir" ] || die "Can't write to $dl_dir"
+}
+
+download_episode() { # EP
+    _name=$(printf '%s - Episode %02d (%s)' "$title" "$1" "$mode" | sed 's#[/\\:*?"<>|]#-#g')
+    _out="$dl_dir/$_name"
+    if [ -s "$_out.mkv" ] || [ -s "$_out.ts" ]; then info "Already downloaded: $_name"; return 0; fi
+    resolve_episode "$mal_id" "$1" "$mode" || return 1
+    load_variant || return 1
+    _w="$cache_dir/dl/$mal_id-$1-$mode"
+    mkdir -p "$_w"
+    printf '%s\n' "$_m" | tr -d '\r' | awk -v origin="$_origin" -v dir="$_dir" '
+        /^#/ || /^[[:space:]]*$/ { next }
+        /^https?:\/\// { print; next }
+        /^\// { print origin $0; next }
+        { print dir "/" $0 }' >"$_w/urls"
+    _n=$(wc -l <"$_w/urls")
+    [ "$_n" -gt 0 ] || { info "Playlist has no segments."; return 1; }
+    # download missing segments in batches over one connection; a few passes for failures
+    _pass=0
+    while [ $_pass -lt 5 ]; do
+        _i=1 _have=0
+        while [ $_i -le "$_n" ]; do
+            set --
+            while [ $_i -le "$_n" ] && [ $# -lt 40 ]; do
+                if [ -s "$_w/$_i.ts" ]; then _have=$((_have + 1))
+                else set -- "$@" "$(sed -n "${_i}p" "$_w/urls")" -o "$_w/$_i.ts.part"; fi
+                _i=$((_i + 1))
+            done
+            [ $# -eq 0 ] && continue
+            curl -sfL --connect-timeout 15 --speed-limit 10000 --speed-time 15 -A "$agent" -e "$stream_ref" \
+                -w '%{stderr}%{exitcode} %{filename_effective}\n' "$@" >/dev/null 2>"$_w/wout"
+            while read -r _rc _f; do
+                [ -e "$_f" ] || continue
+                if [ "$_rc" = 0 ] && [ -s "$_f" ]; then mv -f "$_f" "${_f%.part}"; _have=$((_have + 1))
+                else rm -f "$_f"; fi
+            done <"$_w/wout"
+            rm -f "$_w"/*.part
+            printf '\r  %s/%s pieces (%s%%)' "$_have" "$_n" $((_have * 100 / _n)) >&2
+        done
+        [ "$_have" -ge "$_n" ] && break
+        _pass=$((_pass + 1))
+        sleep 3
+    done
+    printf '\n' >&2
+    [ "$_have" -ge "$_n" ] || { info "Could not download $((_n - _have)) of $_n pieces; run the same command again to continue."; return 1; }
+    _vtt=""
+    if [ -n "$sub_url" ]; then
+        get -e "$stream_ref" -o "$_w/sub.vtt" "$sub_url" && [ -s "$_w/sub.vtt" ] && _vtt="$_w/sub.vtt"
+    fi
+    if has ffmpeg; then
+        step "Saving $_name.mkv..."
+        seq 1 "$_n" | while read -r _i; do cat "$_w/$_i.ts"; done |
+            ffmpeg -v error -y -i - ${_vtt:+-i "$_vtt"} -map 0:v -map 0:a ${_vtt:+-map 1:s} -c copy \
+                ${_vtt:+-c:s srt -metadata:s:s:0 title="$sub_lang" -disposition:s:0 default} \
+                -metadata title="$title - Episode $1" -f matroska "$_out.mkv.part" &&
+            mv -f "$_out.mkv.part" "$_out.mkv" || { rm -f "$_out.mkv.part"; info "ffmpeg failed to save the episode."; return 1; }
+    else
+        step "Saving $_name.ts..."
+        seq 1 "$_n" | while read -r _i; do cat "$_w/$_i.ts"; done >"$_out.ts.part" &&
+            mv -f "$_out.ts.part" "$_out.ts" || { rm -f "$_out.ts.part"; info "Could not write $_out.ts"; return 1; }
+        [ -n "$_vtt" ] && cp "$_vtt" "$_out.vtt"
+    fi
+    rm -rf "$_w"
+}
+
+download_episodes() { # SPEC
+    _eps=$(episode_range "$1") || exit 1
+    check_download_dir
+    has ffmpeg || info "ffmpeg is not installed: saving .ts with a separate .vtt subtitle file (for .mkv: apk add ffmpeg)."
+    [ "$player" = "iSH" ] && start_keepalive
+    _total=$(printf '%s\n' "$_eps" | wc -l) _k=0 _ok=0 _failed=""
+    for _e in $_eps; do
+        _k=$((_k + 1))
+        info "[$_k/$_total] $title - episode $_e ($mode)"
+        if download_episode "$_e"; then _ok=$((_ok + 1)); else _failed="$_failed $_e"; fi
+    done
+    info "Downloaded $_ok of $_total episodes to $dl_dir"
+    [ -n "$_failed" ] && info "Failed episodes:$_failed (run the same command again to retry)"
+    [ -z "$_failed" ]
+}
+
 # ---------- proxy diagnostics (kari --test-proxy) ----------
 # Times the local server on this device: plain files, and a segment that only
 # appears after 3 seconds (which must be waited for, not answered with 404).
@@ -659,9 +783,11 @@ Options:
   -d, --dub             play the English dub
   -e, --episode N       start at episode N
   -q, --quality Q       best | worst | 1080 | 720 | 480 | 360
+  -D, --download EPS    download episodes instead of playing: N, N-M, N- or all
+  -o, --output DIR      download folder (default: VLC's folder at /mnt/vlc on iSH)
   -s, --sub-lang LANG   subtitle language label (default: English, "none" to disable)
   -p, --player P        iSH | mpv | vlc | link  (default: auto)
-  -D, --delete-history  clear watch history
+      --delete-history  clear watch history
   -U, --update          update kari to the latest version
       --test-proxy      check which local proxy responses work on this device
   -V, --version         print version
@@ -677,7 +803,7 @@ EOF
 # ---------- main ----------
 trap cleanup EXIT
 trap 'exit 1' INT TERM HUP
-query="" start_ep="" do_continue=""
+query="" start_ep="" do_continue="" download_eps="" dl_dir="${KARI_DOWNLOAD_DIR:-}"
 while [ $# -gt 0 ]; do
     case "$1" in
         -c | --continue) do_continue=1 ;;
@@ -686,7 +812,9 @@ while [ $# -gt 0 ]; do
         -q | --quality) [ -n "$2" ] || die "-q needs a value"; quality="$2"; shift ;;
         -s | --sub-lang) [ -n "$2" ] || die "-s needs a value"; sub_lang="$2"; shift ;;
         -p | --player) [ -n "$2" ] || die "-p needs a value"; player="$2"; shift ;;
-        -D | --delete-history) rm -f "$hist_file"; info "History deleted."; exit 0 ;;
+        -D | --download) [ -n "$2" ] || die "--download needs episodes (N, N-M, N- or all)"; download_eps="$2"; shift ;;
+        -o | --output) [ -n "$2" ] || die "-o needs a folder"; dl_dir="$2"; shift ;;
+        --delete-history) rm -f "$hist_file"; info "History deleted."; exit 0 ;;
         -U | --update) update_script ;;
         -V | --version) echo "$version_number"; exit 0 ;;
         --test-proxy) test_proxy ;;
@@ -704,7 +832,16 @@ if [ -n "$do_continue" ]; then
     continue_history
 else
     search_and_pick
-    if [ -n "$start_ep" ]; then ep="$start_ep"; else select_episode || exit 0; fi
+    if [ -n "$download_eps" ]; then :
+    elif [ -n "$start_ep" ]; then ep="$start_ep"; else select_episode || exit 0; fi
+fi
+
+if [ -n "$download_eps" ]; then
+    if [ -z "$dl_dir" ]; then
+        if [ "$player" = "iSH" ]; then dl_dir=/mnt/vlc; else dl_dir="$HOME/Downloads/kari"; fi
+    fi
+    download_episodes "$download_eps"
+    exit
 fi
 
 play_and_pause

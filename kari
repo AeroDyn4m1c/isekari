@@ -6,7 +6,7 @@
 # VLC for iOS cannot send the Referer header the CDN requires, so on iSH the
 # stream is played through a tiny local proxy (busybox nc + a shell handler) that adds it.
 
-version_number="1.5.0"
+version_number="1.5.1"
 
 # ---------- configuration (override with environment variables) ----------
 mode="${KARI_MODE:-sub}"                    # sub | dub
@@ -14,7 +14,8 @@ quality="${KARI_QUALITY:-best}"             # best | worst | 1080 | 720 | 480 | 
 sub_lang="${KARI_SUB_LANG:-English}"        # subtitle label to prefer, or "none"
 port="${KARI_PORT:-8642}"                   # local proxy port (iSH only)
 player="${KARI_PLAYER:-}"                   # auto when empty: iSH | mpv | vlc | link
-repo="${KARI_REPO:-AeroDyn4m1c/kari-ios}"   # GitHub repo used by `kari -U`
+repo="${KARI_REPO:-AeroDyn4m1c/kari-ios}"   # GitHub repo used by `kari -u` / `kari -U`
+test_branch="v2"                             # branch `kari -U` installs for testing
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/kari"
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/kari"
 hist_file="$state_dir/history"
@@ -829,15 +830,15 @@ test_proxy() {
 }
 
 # ---------- self update ----------
-update_script() {
-    _url="https://raw.githubusercontent.com/$repo/main/kari"
+update_script() { # BRANCH
+    _url="https://raw.githubusercontent.com/$repo/$1/kari"
     _new=$(curl -sfL --max-time 60 "$_url") || die "Could not download update from $_url"
     printf '%s' "$_new" | head -n 1 | grep -q '^#!/bin/sh' || die "Downloaded file does not look like kari."
     _self=$(command -v "$0" 2>/dev/null || printf '%s' "$0")
-    if printf '%s\n' "$_new" | cmp -s - "$_self"; then info "kari is already up to date ($version_number)."; exit 0; fi
+    if printf '%s\n' "$_new" | cmp -s - "$_self"; then info "kari is already up to date ($version_number, $1 branch)."; exit 0; fi
     printf '%s\n' "$_new" >"$_self.new" && chmod +x "$_self.new" && mv "$_self.new" "$_self" ||
         die "Could not write $_self (try running with sudo / as root)."
-    info "kari updated: $(sed -n 's/^version_number="\(.*\)"/\1/p' "$_self")"
+    info "kari updated: $(sed -n 's/^version_number="\(.*\)"/\1/p' "$_self") ($1 branch)"
     exit 0
 }
 
@@ -858,7 +859,8 @@ Options:
   -s, --sub-lang LANG   subtitle language label (default: English, "none" to disable)
   -p, --player P        iSH | mpv | vlc | link  (default: auto)
       --delete-history  clear watch history
-  -U, --update          update kari to the latest version
+  -u, --update          update kari to the latest version (main branch)
+  -U, --update-test     install the test version ($test_branch branch); -u goes back
       --test-proxy      check which local proxy responses work on this device
   -V, --version         print version
   -h, --help            show this help
@@ -886,7 +888,8 @@ while [ $# -gt 0 ]; do
         -D | --download) download=1 ;;
         -o | --output) [ -n "$2" ] || die "-o needs a folder"; dl_dir="$2"; shift ;;
         --delete-history) rm -f "$hist_file"; info "History deleted."; exit 0 ;;
-        -U | --update) update_script ;;
+        -u | --update) update_script main ;;
+        -U | --update-test) update_script "$test_branch" ;;
         -V | --version) echo "$version_number"; exit 0 ;;
         --test-proxy) test_proxy ;;
         -h | --help) usage; exit 0 ;;

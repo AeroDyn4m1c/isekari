@@ -6,7 +6,7 @@
 # VLC for iOS cannot send the Referer header the CDN requires, so on iSH the
 # stream is played through a tiny local proxy (busybox nc + a shell handler) that adds it.
 
-version_number="2.0.0-beta"
+version_number="2.0.0"
 
 # ---------- configuration (override with environment variables) ----------
 mode="${KARI_MODE:-sub}"                    # sub | dub
@@ -14,7 +14,7 @@ quality="${KARI_QUALITY:-best}"             # best | worst | 1080 | 720 | 480 | 
 sub_lang="${KARI_SUB_LANG:-English}"        # subtitle label to prefer, or "none"
 port="${KARI_PORT:-8642}"                   # local proxy port (iSH only)
 player="${KARI_PLAYER:-}"                   # auto when empty: iSH | mpv | vlc | link
-repo="${KARI_REPO:-AeroDyn4m1c/kari-ios}"   # GitHub repo used by `kari -u` / `kari -U`
+repo="${KARI_REPO:-AeroDyn4m1c/isekari}"   # GitHub repo used by `kari -u` / `kari -U`
 test_branch="v2"                             # branch `kari -U` installs for testing
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/kari"
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/kari"
@@ -1152,7 +1152,7 @@ test_proxy() {
 update_script() { # BRANCH
     # raw.githubusercontent.com caches a branch for ~5 minutes; downloading the
     # branch's latest commit by its SHA always gets the file just pushed.
-    _ref=$(curl -sf --max-time 15 -H 'Accept: application/vnd.github.sha' \
+    _ref=$(curl -sfL --max-time 15 -H 'Accept: application/vnd.github.sha' \
         "https://api.github.com/repos/$repo/commits/$1" 2>/dev/null)
     case "$_ref" in *[!0-9a-f]* | '') _ref=$1 ;; esac
     [ ${#_ref} -eq 40 ] || _ref=$1

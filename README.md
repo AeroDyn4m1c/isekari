@@ -1,6 +1,8 @@
-# kari-ios
+# isekari
 
 Stream anime on your **iPhone / iPad** from the terminal and watch it in **VLC**, no Mac and no downloading needed.
+
+The command is still `kari`: isekari is kari, transported to another world (your iPad).
 
 It's a POSIX-shell port of the anime part of [kari](https://github.com/dhairya3391/kari), made to run in [iSH](https://ish.app) the same way [ani-cli](https://github.com/pystardust/ani-cli) used to.
 
@@ -24,7 +26,7 @@ Open iSH and paste:
 
 ```sh
 apk add curl
-curl -sL https://raw.githubusercontent.com/AeroDyn4m1c/kari-ios/main/install.sh | sh
+curl -sL https://raw.githubusercontent.com/AeroDyn4m1c/isekari/main/install.sh | sh
 ```
 
 This installs the dependencies (`curl jq openssl fzf`) and puts `kari` in `/usr/local/bin`.
@@ -34,7 +36,7 @@ This installs the dependencies (`curl jq openssl fzf`) and puts `kari` in `/usr/
 
 ```sh
 apk add curl jq openssl fzf
-curl -sL https://raw.githubusercontent.com/AeroDyn4m1c/kari-ios/main/kari -o /usr/local/bin/kari
+curl -sL https://raw.githubusercontent.com/AeroDyn4m1c/isekari/main/kari -o /usr/local/bin/kari
 chmod +x /usr/local/bin/kari
 ```
 </details>

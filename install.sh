@@ -1,8 +1,8 @@
 #!/bin/sh
 # kari installer for iSH (iPhone / iPad). Also works on Alpine / other Linux.
-#   curl -sL https://raw.githubusercontent.com/AeroDyn4m1c/kari-ios/main/install.sh | sh
+#   curl -sL https://raw.githubusercontent.com/AeroDyn4m1c/isekari/main/install.sh | sh
 
-repo="${KARI_REPO:-AeroDyn4m1c/kari-ios}"
+repo="${KARI_REPO:-AeroDyn4m1c/isekari}"
 dest="${KARI_INSTALL_DIR:-/usr/local/bin}"
 
 if command -v apk >/dev/null 2>&1; then

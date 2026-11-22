@@ -831,7 +831,13 @@ test_proxy() {
 
 # ---------- self update ----------
 update_script() { # BRANCH
-    _url="https://raw.githubusercontent.com/$repo/$1/kari"
+    # raw.githubusercontent.com caches a branch for ~5 minutes; downloading the
+    # branch's latest commit by its SHA always gets the file just pushed.
+    _ref=$(curl -sf --max-time 15 -H 'Accept: application/vnd.github.sha' \
+        "https://api.github.com/repos/$repo/commits/$1" 2>/dev/null)
+    case "$_ref" in *[!0-9a-f]* | '') _ref=$1 ;; esac
+    [ ${#_ref} -eq 40 ] || _ref=$1
+    _url="https://raw.githubusercontent.com/$repo/$_ref/kari"
     _new=$(curl -sfL --max-time 60 "$_url") || die "Could not download update from $_url"
     printf '%s' "$_new" | head -n 1 | grep -q '^#!/bin/sh' || die "Downloaded file does not look like kari."
     _self=$(command -v "$0" 2>/dev/null || printf '%s' "$0")

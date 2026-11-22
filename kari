@@ -719,7 +719,7 @@ following_menu() {
             printf '\n\033[1;35mFollowing: nothing yet.\033[0m\n' >&2
             info "  kari asks after the last episode, or add one from your history with a."
         fi
-        _in=$(prompt "d+number to stop following (d2), a to add from history (Enter goes back): ")
+        _in=$(prompt "Type a name to search and follow, a to add from history, d+number to stop following (d2), Enter goes back: ")
         case "$_in" in
             '') return 1 ;;
             [dD][0-9]* | [dD]' '[0-9]*)
@@ -736,8 +736,19 @@ following_menu() {
                 _pick=$(printf '%s\n' "$_cands" | menu "Follow which anime? ") || continue
                 follow_add "$(printf '%s' "$_pick" | cut -f1)" "$(printf '%s' "$_pick" | cut -f2)"
                 ;;
+            *) follow_search "$_in" ;;
         esac
     done
+}
+
+# follow_search NAME: search AniList, pick the season and follow it (keeps
+# the anime that is playing now).
+follow_search() {
+    _keep="$anilist_id	$mal_id	$ep_count	$title"
+    query=$1
+    search_and_pick && follow_add "$anilist_id" "$title"
+    anilist_id=$(printf '%s' "$_keep" | cut -f1) mal_id=$(printf '%s' "$_keep" | cut -f2)
+    ep_count=$(printf '%s' "$_keep" | cut -f3) title=$(printf '%s' "$_keep" | cut -f4)
 }
 
 # Check the followed anime in one AniList request per 50 and write $news_file:
@@ -772,10 +783,13 @@ check_news() {
             | ($fresh | index($m.id) != null) as $isnew
             # episodes out when following are not news; on the first check remember how many
             | (if $isnew then ["base", $m.id, ($m | avail)] else empty end),
-              (if ($isnew | not) and $w != null and $w > 0 and ($m | avail) > $w and ($m | avail) > ($base[$m.id | tostring] // 0) then
-                  ["ep", $m.id, $m.idMal, ($m | avail), $mt, $w + 1,
-                   "\($mt): new episodes \($w + 1)-\($m | avail) out (\($m.status | ascii_downcase))"]
-               else empty end),
+              # episodes out since following (or since the last one watched, if later)
+              (([($w // 0), ($base[$m.id | tostring] // 0)] | max) as $seen
+               | ($m | avail) as $av
+               | if ($isnew | not) and $m.idMal != null and $av > $seen then
+                  ["ep", $m.id, $m.idMal, $av, $mt, (if ($w // 0) > 0 then $w + 1 else $seen + 1 end),
+                   "\($mt): new \(if $av == $seen + 1 then "episode \($av)" else "episodes \($seen + 1)-\($av)" end) out (\($m.status | ascii_downcase))"]
+                 else empty end),
               ($m.relations.edges[]
                | select(.node.type == "ANIME" and .node.status != "CANCELLED")
                | select(.relationType == "SEQUEL" or
@@ -1151,6 +1165,7 @@ Options:
   -D, --download        download instead of playing; episodes after the title
                         (N, N-M, N- or all) or asked for, e.g. kari -D frieren 1-12
   -w, --watchlist [NAME] add NAME to the watchlist, or open the watchlist
+  -f, --follow [NAME]   search NAME and follow it for news, or open the following list
   -n, --news            check followed anime for new seasons, movies, episodes
   -o, --output DIR      download folder (default: VLC's folder at /mnt/vlc on iSH)
   -s, --sub-lang LANG   subtitle language label (default: English, "none" to disable)
@@ -1178,7 +1193,7 @@ EOF
 trap cleanup EXIT
 trap 'exit 1' INT TERM HUP
 query="" start_ep="" do_continue="" download="" download_eps="" dl_dir="${KARI_DOWNLOAD_DIR:-}"
-want_watchlist="" want_news="" from_watchlist="" asked_follow=""
+want_watchlist="" want_follow="" want_news="" from_watchlist="" asked_follow=""
 nargs=0 last_arg=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -1190,6 +1205,7 @@ while [ $# -gt 0 ]; do
         -p | --player) [ -n "$2" ] || die "-p needs a value"; player="$2"; shift ;;
         -D | --download) download=1 ;;
         -w | --watchlist) want_watchlist=1 ;;
+        -f | --follow) want_follow=1 ;;
         -n | --news) want_news=1 ;;
         -o | --output) [ -n "$2" ] || die "-o needs a folder"; dl_dir="$2"; shift ;;
         --delete-history) rm -f "$hist_file"; info "History deleted."; exit 0 ;;
@@ -1220,6 +1236,9 @@ fi
 
 if [ -n "$want_watchlist" ] && [ -n "$query" ]; then
     watchlist_add "$query"; exit 0
+elif [ -n "$want_follow" ]; then
+    if [ -n "$query" ]; then follow_search "$query"; else following_menu; fi
+    exit 0
 elif [ -n "$want_watchlist" ]; then
     watchlist_menu || exit 0
 elif [ -n "$want_news" ]; then

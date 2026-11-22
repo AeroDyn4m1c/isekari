@@ -48,6 +48,7 @@ kari -d one piece    # English dub
 kari -e 5 frieren    # start at episode 5
 kari -c              # continue watching (history)
 kari -w dandadan     # add to the watchlist (kari -w alone opens it)
+kari -f frieren      # follow an anime for news (kari -f alone opens the list)
 kari -n              # news about the anime you follow
 kari -D frieren 1-12 # download episodes 1-12 (see "Download for offline")
 kari -u              # update kari
@@ -113,7 +114,7 @@ Number, letter, or an anime name to search (Enter quits):
 - **A number** plays the next episode of that anime. The list shows the 5 most recent ones you haven't finished.
 - **Type a name** and press Enter to search, the same as `kari <name>`.
 - **w, the watchlist:** anime you want to watch. Type a name to add it, `d2` removes entry 2, and a number searches that entry as if you ran `kari <name>`, so you pick the season there. An entry leaves the watchlist once you start watching it.
-- **f, following:** when you start the last episode out, kari asks whether to follow that anime. In this list, `a` adds one from your history and `d2` stops following entry 2.
+- **f, following:** when you start the last episode out, kari asks whether to follow that anime. In this list, type a name to search and follow any anime (also ones you watched outside kari), `a` adds one from your history, and `d2` stops following entry 2.
 - **n, news:** checks everything you follow in one request and lists only what's new: new episodes, new seasons, and movies, specials and OVAs. Unwatched seasons stay listed until you watch them or dismiss them. Movies and specials that already existed when you followed the anime don't count as news. If nothing changed, it says "Nothing new." kari also checks once a day by itself, the first time you open the start menu.
 - **h:** your whole history, the same as `kari -c`.
 

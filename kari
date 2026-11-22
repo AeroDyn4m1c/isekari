@@ -19,6 +19,7 @@ test_branch="v2"                             # branch `kari -U` installs for tes
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/kari"
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/kari"
 hist_file="$state_dir/history"
+notes_file="${TMPDIR:-/tmp}/kari-notes.$$"
 watch_file="$state_dir/watchlist"       # one name per line, searched when picked
 follow_file="$state_dir/following"      # anilist_id<TAB>title<TAB>checked (0|1)<TAB>episodes out when followed
 news_file="$state_dir/news"             # result of the last news check
@@ -36,6 +37,16 @@ cdn_secret='MpCdnT0k3n!9f2K#xQ7vL5mR8wN1pY4s'
 # ---------- helpers ----------
 die() { printf '\033[1;31m%s\033[0m\n' "$*" >&2; exit 1; }
 info() { printf '\033[1;35m%s\033[0m\n' "$*" >&2; }
+# say: an info message that is shown again after the next screen clear
+say() { info "$*"; printf '%s\n' "$*" >>"$notes_file"; }
+# screen: clear the terminal (menus only), then repeat the messages said since
+screen() {
+    [ -z "$KARI_NO_CLEAR" ] && printf '\033[H\033[2J\033[3J' >&2
+    if [ -s "$notes_file" ]; then
+        while IFS= read -r _note; do info "$_note"; done <"$notes_file"; printf "\n" >&2
+        : >"$notes_file"
+    fi
+}
 has() { command -v "$1" >/dev/null 2>&1; }
 step() { if [ -n "$KARI_DEBUG" ]; then info "[+$(($(date +%s) - ${t0:-0}))s] $*"; else info "$*"; fi; }
 
@@ -89,9 +100,9 @@ anilist() { # anilist QUERY VARIABLES_JSON
     # no -f: on errors AniList answers with an HTTP error and a JSON message worth showing
     _ar=$(curl -sL --connect-timeout 15 --max-time 30 -A "$agent" -X POST "$anilist_api" \
         -H 'Content-Type: application/json' -H 'Accept: application/json' \
-        -d "$(jq -cn --arg q "$1" --argjson v "$2" '{query:$q,variables:$v}')") || { info "Could not reach AniList."; return 1; }
+        -d "$(jq -cn --arg q "$1" --argjson v "$2" '{query:$q,variables:$v}')") || { say "Could not reach AniList."; return 1; }
     _ae=$(printf '%s' "$_ar" | jq -r '.errors[0].message // empty' 2>/dev/null)
-    [ -n "$_ae" ] && { info "AniList error: $_ae"; return 1; }
+    [ -n "$_ae" ] && { say "AniList error: $_ae"; return 1; }
     printf '%s' "$_ar"
 }
 
@@ -348,6 +359,7 @@ start_keepalive() {
 }
 
 cleanup() {
+    rm -f "$notes_file"
     stop_prefetch
     [ -n "$proxy_pid" ] && kill "$proxy_pid" 2>/dev/null
     [ -n "$keepalive_pid" ] && kill "$keepalive_pid" 2>/dev/null
@@ -497,7 +509,7 @@ play_episode() {
     update_history
     if [ -n "$from_watchlist" ]; then
         remove_line "$watch_file" "$from_watchlist"
-        info "Removed \"$from_watchlist\" from your watchlist (it's in Continue watching now)."
+        say "Removed \"$from_watchlist\" from your watchlist (it's in Continue watching now)."
         from_watchlist=""
     fi
     case "$player" in
@@ -560,7 +572,7 @@ search_and_pick() {
     [ -z "$query" ] && return 1
     info "Searching \"$query\"..."
     _results=$(search_anime "$query") || return 2
-    [ -z "$_results" ] && { info "No results for \"$query\"."; return 2; }
+    [ -z "$_results" ] && { say "No results for \"$query\"."; return 2; }
     _pick=$(printf '%s\n' "$_results" | menu "Select anime: ") || return 1
     anilist_id=$(printf '%s' "$_pick" | cut -f1)
     mal_id=$(printf '%s' "$_pick" | cut -f2)
@@ -569,7 +581,7 @@ search_and_pick() {
 }
 
 continue_history() {
-    [ -s "$hist_file" ] || { info "No watch history yet."; return 1; }
+    [ -s "$hist_file" ] || { say "No watch history yet."; return 1; }
     _pick=$(awk -F '\t' '{
             if ($4 + 0 > 0 && $3 + 0 >= $4 + 0) s = "finished"; else s = "next: ep " $3 + 1
             printf "%s\t%s - watched ep %s/%s (%s, %s)\n", $0, $6, $3, ($4 > 0 ? $4 : "?"), $5, s
@@ -613,7 +625,8 @@ start_menu() {
     auto_news
     while :; do
         _recent=$(recent_entries) _nr=0
-        printf '\n\033[1;35mkari %s\033[0m\n' "$version_number" >&2
+        screen
+        printf '\033[1;35mkari %s\033[0m\n' "$version_number" >&2
         if [ -n "$_recent" ]; then
             _nr=$(printf '%s\n' "$_recent" | grep -c .)
             printf '%s\n' "$_recent" | awk -F '\t' '{
@@ -650,21 +663,22 @@ start_menu() {
 watchlist_add() {
     mkdir -p "$state_dir"
     if [ -f "$watch_file" ] && awk -v n="$1" 'tolower($0) == tolower(n) { f = 1 } END { exit !f }' "$watch_file"; then
-        info "\"$1\" is already in your watchlist."
+        say "\"$1\" is already in your watchlist."
     else
         printf '%s\n' "$1" >>"$watch_file"
-        info "Added \"$1\" to your watchlist."
+        say "Added \"$1\" to your watchlist."
     fi
 }
 
 # Returns 0 when an anime was picked to watch.
 watchlist_menu() {
     while :; do
+        screen
         if [ -s "$watch_file" ]; then
-            printf '\n\033[1;35mWatchlist (%s):\033[0m\n' "$(count_lines "$watch_file")" >&2
+            printf '\033[1;35mWatchlist (%s):\033[0m\n' "$(count_lines "$watch_file")" >&2
             awk '{ printf "\033[1;36m%3d\033[0m %s\n", NR, $0 }' "$watch_file" >&2
         else
-            printf '\n\033[1;35mWatchlist: empty.\033[0m\n' >&2
+            printf '\033[1;35mWatchlist: empty.\033[0m\n' >&2
             info "  Type an anime name to add it."
         fi
         _in=$(prompt "Number to watch, d+number to remove (d2), a name to add (Enter goes back): ")
@@ -674,7 +688,7 @@ watchlist_menu() {
             [dD][0-9]* | [dD]' '[0-9]*)
                 _i=$(printf '%s' "$_in" | tr -dc 0-9)
                 _name=$(sed -n "${_i}p" "$watch_file" 2>/dev/null)
-                [ -n "$_name" ] && { remove_line "$watch_file" "$_name"; info "Removed \"$_name\"."; }
+                [ -n "$_name" ] && { remove_line "$watch_file" "$_name"; say "Removed \"$_name\"."; }
                 continue
                 ;;
             *[!0-9]*) ;;
@@ -697,7 +711,7 @@ follow_add() { # ID TITLE
     is_following "$1" && return 0
     mkdir -p "$state_dir"
     printf '%s\t%s\t0\t0\n' "$1" "$2" >>"$follow_file"
-    info "Following $2. New seasons, movies and episodes show up under News."
+    say "Following $2. New seasons, movies and episodes show up under News."
 }
 
 # After the last (aired) episode starts, offer to follow the anime once.
@@ -712,11 +726,12 @@ offer_follow() {
 
 following_menu() {
     while :; do
+        screen
         if [ -s "$follow_file" ]; then
-            printf '\n\033[1;35mFollowing (%s):\033[0m\n' "$(count_lines "$follow_file")" >&2
+            printf '\033[1;35mFollowing (%s):\033[0m\n' "$(count_lines "$follow_file")" >&2
             awk -F '\t' '{ printf "\033[1;36m%3d\033[0m %s\n", NR, $2 }' "$follow_file" >&2
         else
-            printf '\n\033[1;35mFollowing: nothing yet.\033[0m\n' >&2
+            printf '\033[1;35mFollowing: nothing yet.\033[0m\n' >&2
             info "  kari asks after the last episode, or add one from your history with a."
         fi
         _in=$(prompt "Type a name to search and follow, a to add from history, d+number to stop following (d2), Enter goes back: ")
@@ -725,14 +740,14 @@ following_menu() {
             [dD][0-9]* | [dD]' '[0-9]*)
                 _i=$(printf '%s' "$_in" | tr -dc 0-9)
                 _l=$(sed -n "${_i}p" "$follow_file" 2>/dev/null)
-                [ -n "$_l" ] && { remove_line "$follow_file" "$_l"; info "Stopped following $(printf '%s' "$_l" | cut -f2)."; }
+                [ -n "$_l" ] && { remove_line "$follow_file" "$_l"; say "Stopped following $(printf '%s' "$_l" | cut -f2)."; }
                 ;;
             a | A)
-                [ -s "$hist_file" ] || { info "No watch history yet."; continue; }
+                [ -s "$hist_file" ] || { say "No watch history yet."; continue; }
                 _cands=$(awk -F '\t' -v fol=" $({ [ -f "$follow_file" ] && cut -f1 "$follow_file"; } | tr '\n' ' ')" '
                     index(fol, " " $1 " ") == 0 { printf "%s\t%s\t%s - watched ep %s/%s\n", $1, $6, $6, $3, ($4 > 0 ? $4 : "?") }' \
                     "$hist_file")
-                [ -n "$_cands" ] || { info "Everything in your history is followed already."; continue; }
+                [ -n "$_cands" ] || { say "Everything in your history is followed already."; continue; }
                 _pick=$(printf '%s\n' "$_cands" | menu "Follow which anime? ") || continue
                 follow_add "$(printf '%s' "$_pick" | cut -f1)" "$(printf '%s' "$_pick" | cut -f2)"
                 ;;
@@ -824,16 +839,17 @@ check_news() {
 auto_news() {
     [ -s "$follow_file" ] || return 0
     [ "$(cat "$news_day_file" 2>/dev/null)" = "$(date +%F)" ] && return 0
-    check_news || { info "Could not check news (AniList down?). Try n later."; date +%F >"$news_day_file"; }
+    check_news || { say "Could not check news (AniList down?). Try n later."; date +%F >"$news_day_file"; }
 }
 
 # Returns 0 when something was picked to watch.
 news_menu() {
-    [ -s "$follow_file" ] || { info "You're not following any anime yet (see f)."; return 1; }
+    [ -s "$follow_file" ] || { say "You're not following any anime yet (see f)."; return 1; }
     check_news || return 1
     while :; do
-        [ -s "$news_file" ] || { info "Nothing new."; return 1; }
-        printf '\n\033[1;35mNews\033[0m\n' >&2
+        [ -s "$news_file" ] || { say "Nothing new."; return 1; }
+        screen
+        printf '\033[1;35mNews\033[0m\n' >&2
         awk -F '\t' '{ printf "\033[1;36m%3d\033[0m %s\n", NR, $7 }' "$news_file" >&2
         _in=$(prompt "Number to open (Enter goes back): ")
         case "$_in" in '' ) return 1 ;; *[!0-9]*) continue ;; esac
@@ -862,7 +878,7 @@ dismiss	dismiss (don't show again)" ;;
             dismiss) printf '%s\n' "$_id" >>"$known_file"; remove_line "$news_file" "$_l" ;;
             unfollow)
                 remove_line "$follow_file" "$(grep "^$_id	" "$follow_file")"
-                remove_line "$news_file" "$_l"; info "Stopped following $_t."
+                remove_line "$news_file" "$_l"; say "Stopped following $_t."
                 ;;
         esac
     done

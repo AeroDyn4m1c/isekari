@@ -42,11 +42,13 @@ chmod +x /usr/local/bin/kari
 ## Use
 
 ```sh
-kari                 # asks what to search for
+kari                 # start menu (see below)
 kari frieren         # search directly
 kari -d one piece    # English dub
 kari -e 5 frieren    # start at episode 5
 kari -c              # continue watching (history)
+kari -w dandadan     # add to the watchlist (kari -w alone opens it)
+kari -n              # news about the anime you follow
 kari -D frieren 1-12 # download episodes 1-12 (see "Download for offline")
 kari -u              # update kari
 kari -U              # install the test version (v2 branch); kari -u goes back
@@ -56,7 +58,7 @@ kari -h              # all options
 1. Pick the anime and the episode. Type to filter, then tap the item or press Enter.
 2. Wait for **"Ready: first segment ..."**. kari checks that the video really comes through before it shows the link.
 3. **Tap the green "Tap here to open in VLC" box.** VLC opens and starts playing, with English subtitles in sub mode.
-4. When you're done, switch back to iSH and press **Enter**, then choose **next**, **replay**, **previous**, **select**, **switch to dub/sub**, **quality**, **search** or **quit**.
+4. When you're done, switch back to iSH and press **Enter**, then choose **next**, **replay**, **previous**, **select**, **switch to dub/sub**, **quality**, **search**, **start menu** or **quit**.
 
 ### First run: allow location access
 
@@ -92,6 +94,28 @@ In the window that opens, pick **On My iPhone** (or **On My iPad**) › **VLC**.
 **For .mkv files, install ffmpeg once:** `apk add ffmpeg` (about 100 MB). Without it, kari saves a `.ts` video with a separate `.vtt` subtitle file next to it.
 
 Downloading needs iSH to keep running, like playing does: keep it open, or allow location access (see above) and switch to other apps. If a download is interrupted, run the same command again: it continues where it stopped, and skips episodes that are already saved.
+
+## Start menu, watchlist and news
+
+`kari` on its own opens the start menu:
+
+```
+kari 2.0.0
+  1 JUJUTSU KAISEN - next: ep 7/24 (sub)
+  2 ONE PIECE - next: ep 1101/1179 (sub)
+  w Watchlist (3)
+  f Following (4)
+  n News (2 new!)
+  h All history
+Number, letter, or an anime name to search (Enter quits):
+```
+
+- **A number** plays the next episode of that anime. The list shows the 5 most recent ones you haven't finished.
+- **Type a name** and press Enter to search, the same as `kari <name>`.
+- **w, the watchlist:** anime you want to watch. Type a name to add it, `d2` removes entry 2, and a number searches that entry as if you ran `kari <name>`, so you pick the season there. An entry leaves the watchlist once you start watching it.
+- **f, following:** when you start the last episode out, kari asks whether to follow that anime. In this list, `a` adds one from your history and `d2` stops following entry 2.
+- **n, news:** checks everything you follow in one request and lists only what's new: new episodes, new seasons, and movies, specials and OVAs. Unwatched seasons stay listed until you watch them or dismiss them. Movies and specials that already existed when you followed the anime don't count as news. If nothing changed, it says "Nothing new." kari also checks once a day by itself, the first time you open the start menu.
+- **h:** your whole history, the same as `kari -c`.
 
 ## How it works
 

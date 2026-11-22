@@ -19,6 +19,11 @@ test_branch="v2"                             # branch `kari -U` installs for tes
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/kari"
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/kari"
 hist_file="$state_dir/history"
+watch_file="$state_dir/watchlist"       # one name per line, searched when picked
+follow_file="$state_dir/following"      # anilist_id<TAB>title<TAB>checked (0|1)<TAB>episodes out when followed
+news_file="$state_dir/news"             # result of the last news check
+known_file="$state_dir/news_known"      # related anime ids not to report (seen or dismissed)
+news_day_file="$state_dir/news_day"     # date of the last automatic news check
 
 agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 anilist_api="https://graphql.anilist.co"
@@ -490,6 +495,11 @@ play_episode() {
     step "Fetching $title - episode $ep ($mode)..."
     resolve_episode "$mal_id" "$ep" "$mode" || return 1
     update_history
+    if [ -n "$from_watchlist" ]; then
+        remove_line "$watch_file" "$from_watchlist"
+        info "Removed \"$from_watchlist\" from your watchlist (it's in Continue watching now)."
+        from_watchlist=""
+    fi
     case "$player" in
         iSH)
             prepare_local || return 1
@@ -544,13 +554,14 @@ select_episode() {
     case "$ep" in '' | *[!0-9]*) return 1 ;; esac
 }
 
+# Returns 1 when cancelled, 2 when the search failed.
 search_and_pick() {
     [ -z "$query" ] && query=$(prompt "Search anime: ")
-    [ -z "$query" ] && exit 0
+    [ -z "$query" ] && return 1
     info "Searching \"$query\"..."
-    _results=$(search_anime "$query") || exit 1
-    [ -z "$_results" ] && die "No results for \"$query\"."
-    _pick=$(printf '%s\n' "$_results" | menu "Select anime: ") || exit 0
+    _results=$(search_anime "$query") || return 2
+    [ -z "$_results" ] && { info "No results for \"$query\"."; return 2; }
+    _pick=$(printf '%s\n' "$_results" | menu "Select anime: ") || return 1
     anilist_id=$(printf '%s' "$_pick" | cut -f1)
     mal_id=$(printf '%s' "$_pick" | cut -f2)
     ep_count=$(printf '%s' "$_pick" | cut -f3)
@@ -558,11 +569,17 @@ search_and_pick() {
 }
 
 continue_history() {
-    [ -s "$hist_file" ] || die "No watch history yet."
+    [ -s "$hist_file" ] || { info "No watch history yet."; return 1; }
     _pick=$(awk -F '\t' '{
             if ($4 + 0 > 0 && $3 + 0 >= $4 + 0) s = "finished"; else s = "next: ep " $3 + 1
             printf "%s\t%s - watched ep %s/%s (%s, %s)\n", $0, $6, $3, ($4 > 0 ? $4 : "?"), $5, s
-        }' "$hist_file" | menu "Continue watching: ") || exit 0
+        }' "$hist_file" | menu "Continue watching: ") || return 1
+    resume_entry "$_pick"
+}
+
+# resume_entry HISTORY_LINE: load a history entry and move to the next episode.
+resume_entry() {
+    _pick=$1
     anilist_id=$(printf '%s' "$_pick" | cut -f1)
     mal_id=$(printf '%s' "$_pick" | cut -f2)
     ep=$(printf '%s' "$_pick" | cut -f3)
@@ -574,6 +591,263 @@ continue_history() {
         jq -r '.data.Media | (.episodes // ((.nextAiringEpisode.episode // 1) - 1))' 2>/dev/null)
     case "$_n" in '' | *[!0-9]*) ;; *) [ "$_n" -gt 0 ] && ep_count=$_n ;; esac
     if [ "$ep_count" -le 0 ] || [ "$ep" -lt "$ep_count" ]; then ep=$((ep + 1)); fi
+}
+
+# ---------- start menu, watchlist, following, news ----------
+hl() { printf '\033[1;36m%3s\033[0m %s\n' "$1" "$2" >&2; }   # menu line: KEY LABEL
+count_lines() { if [ -s "$1" ]; then grep -c . "$1"; else echo 0; fi; }
+
+# remove_line FILE LINE: delete every line equal to LINE
+remove_line() {
+    [ -f "$1" ] || return 0
+    awk -v l="$2" '$0 != l' "$1" >"$1.tmp" && mv "$1.tmp" "$1"
+}
+
+# Unfinished history entries for the start menu (most recent first).
+recent_entries() {
+    [ -s "$hist_file" ] && awk -F '\t' '$4 + 0 <= 0 || $3 + 0 < $4 + 0' "$hist_file" | head -n 5
+}
+
+# `kari` with no arguments. Returns with an anime and episode picked.
+start_menu() {
+    auto_news
+    while :; do
+        _recent=$(recent_entries) _nr=0
+        printf '\n\033[1;35mkari %s\033[0m\n' "$version_number" >&2
+        if [ -n "$_recent" ]; then
+            _nr=$(printf '%s\n' "$_recent" | grep -c .)
+            printf '%s\n' "$_recent" | awk -F '\t' '{
+                printf "\033[1;36m%3d\033[0m %s - next: ep %s/%s (%s)\n", NR, $6, $3 + 1, ($4 > 0 ? $4 : "?"), $5 }' >&2
+        fi
+        hl w "Watchlist ($(count_lines "$watch_file"))"
+        hl f "Following ($(count_lines "$follow_file"))"
+        _nn=$(count_lines "$news_file")
+        if [ "$_nn" -gt 0 ]; then printf '\033[1;36m%3s\033[0m \033[1;32mNews (%s new!)\033[0m\n' n "$_nn" >&2
+        else hl n "News"; fi
+        hl h "All history"
+        _sm=$(prompt "Number, letter, or an anime name to search (Enter quits): ")
+        case "$_sm" in
+            '') exit 0 ;;
+            w | W) watchlist_menu && return ;;
+            f | F) following_menu ;;
+            n | N) news_menu && return ;;
+            h | H) continue_history && return ;;
+            *[!0-9]*) ;;
+            *)
+                if [ "$_sm" -ge 1 ] && [ "$_sm" -le "$_nr" ]; then
+                    resume_entry "$(printf '%s\n' "$_recent" | sed -n "${_sm}p")"
+                    return
+                fi
+                ;;
+        esac
+        case "$_sm" in [wWfFnNhH]) continue ;; esac
+        query=$_sm
+        search_and_pick && select_episode && return
+    done
+}
+
+# watchlist_add NAME
+watchlist_add() {
+    mkdir -p "$state_dir"
+    if [ -f "$watch_file" ] && awk -v n="$1" 'tolower($0) == tolower(n) { f = 1 } END { exit !f }' "$watch_file"; then
+        info "\"$1\" is already in your watchlist."
+    else
+        printf '%s\n' "$1" >>"$watch_file"
+        info "Added \"$1\" to your watchlist."
+    fi
+}
+
+# Returns 0 when an anime was picked to watch.
+watchlist_menu() {
+    while :; do
+        printf '\n\033[1;35mWatchlist\033[0m\n' >&2
+        if [ -s "$watch_file" ]; then
+            awk '{ printf "\033[1;36m%3d\033[0m %s\n", NR, $0 }' "$watch_file" >&2
+        else
+            info "  (empty)"
+        fi
+        _in=$(prompt "Number to watch, d+number to remove (d2), a name to add (Enter goes back): ")
+        _n=$(count_lines "$watch_file")
+        case "$_in" in
+            '') return 1 ;;
+            [dD][0-9]* | [dD]' '[0-9]*)
+                _i=$(printf '%s' "$_in" | tr -dc 0-9)
+                _name=$(sed -n "${_i}p" "$watch_file" 2>/dev/null)
+                [ -n "$_name" ] && { remove_line "$watch_file" "$_name"; info "Removed \"$_name\"."; }
+                continue
+                ;;
+            *[!0-9]*) ;;
+            *)
+                if [ "$_in" -ge 1 ] && [ "$_in" -le "$_n" ]; then
+                    query=$(sed -n "${_in}p" "$watch_file")
+                    search_and_pick && select_episode || continue
+                    from_watchlist=$query
+                    return 0
+                fi
+                ;;
+        esac
+        watchlist_add "$_in"
+    done
+}
+
+is_following() { [ -s "$follow_file" ] && cut -f1 "$follow_file" | grep -qx "$1"; }
+
+follow_add() { # ID TITLE
+    is_following "$1" && return 0
+    mkdir -p "$state_dir"
+    printf '%s\t%s\t0\t0\n' "$1" "$2" >>"$follow_file"
+    info "Following $2. New seasons, movies and episodes show up under News."
+}
+
+# After the last (aired) episode starts, offer to follow the anime once.
+offer_follow() {
+    [ "$ep_count" -gt 0 ] && [ "$ep" -ge "$ep_count" ] || return 0
+    is_following "$anilist_id" && return 0
+    case " $asked_follow " in *" $anilist_id "*) return 0 ;; esac
+    asked_follow="$asked_follow $anilist_id"
+    _a=$(prompt "That's the last episode out. Follow $title for news (new seasons, movies, episodes)? [y/N] ")
+    case "$_a" in [yY]*) follow_add "$anilist_id" "$title" ;; esac
+}
+
+following_menu() {
+    while :; do
+        printf '\n\033[1;35mFollowing\033[0m\n' >&2
+        if [ -s "$follow_file" ]; then
+            awk -F '\t' '{ printf "\033[1;36m%3d\033[0m %s\n", NR, $2 }' "$follow_file" >&2
+        else
+            info "  (nothing yet - you're asked after the last episode, or add one with a)"
+        fi
+        _in=$(prompt "d+number to stop following (d2), a to add from history (Enter goes back): ")
+        case "$_in" in
+            '') return 1 ;;
+            [dD][0-9]* | [dD]' '[0-9]*)
+                _i=$(printf '%s' "$_in" | tr -dc 0-9)
+                _l=$(sed -n "${_i}p" "$follow_file" 2>/dev/null)
+                [ -n "$_l" ] && { remove_line "$follow_file" "$_l"; info "Stopped following $(printf '%s' "$_l" | cut -f2)."; }
+                ;;
+            a | A)
+                [ -s "$hist_file" ] || { info "No watch history yet."; continue; }
+                _pick=$(awk -F '\t' 'NR == FNR { f[$1] = 1; next } !($1 in f) {
+                        printf "%s\t%s\t%s - watched ep %s/%s\n", $1, $6, $6, $3, ($4 > 0 ? $4 : "?") }' \
+                    "${follow_file}" "$hist_file" 2>/dev/null | menu "Follow which anime? ") || continue
+                follow_add "$(printf '%s' "$_pick" | cut -f1)" "$(printf '%s' "$_pick" | cut -f2)"
+                ;;
+        esac
+    done
+}
+
+# Check the followed anime in one AniList request per 50 and write $news_file:
+#   kind<TAB>anilist_id<TAB>mal_id<TAB>episodes<TAB>title<TAB>start_ep<TAB>label
+# kind: ep (new episodes of a followed anime), new (related anime to watch),
+# soon (announced, nothing to watch yet).
+check_news() {
+    mkdir -p "$state_dir"
+    [ -s "$follow_file" ] || { : >"$news_file"; return 0; }
+    info "Checking news for $(count_lines "$follow_file") followed anime..."
+    _ids=$(cut -f1 "$follow_file" | jq -Rn '[inputs | select(length > 0) | tonumber]')
+    _hist=$({ [ -f "$hist_file" ] && cut -f1,3 "$hist_file"; } |
+        jq -Rn '[inputs | split("\t") | {key: .[0], value: (.[1] | tonumber? // 0)}] | from_entries')
+    _known=$({ [ -f "$known_file" ] && cat "$known_file"; } | jq -Rn '[inputs | tonumber?]')
+    _new=$(awk -F '\t' '$3 != 1 { print $1 }' "$follow_file" | jq -Rn '[inputs | tonumber?]')
+    _base=$(cut -f1,4 "$follow_file" | jq -Rn '[inputs | split("\t") | {key: .[0], value: (.[1] | tonumber? // 0)}] | from_entries')
+    _out="" _p=1
+    while :; do
+        _r=$(anilist 'query($ids:[Int],$p:Int){Page(page:$p,perPage:50){pageInfo{hasNextPage} media(id_in:$ids,type:ANIME){id idMal status episodes nextAiringEpisode{episode} title{english romaji userPreferred} relations{edges{relationType node{id idMal type format status episodes nextAiringEpisode{episode} startDate{year month day} title{english romaji userPreferred}}}}}}}' \
+            "{\"ids\":$_ids,\"p\":$_p}") || return 1
+        _out="$_out$(printf '%s' "$_r" | jq -r --argjson hist "$_hist" --argjson known "$_known" \
+            --argjson fresh "$_new" --argjson fol "$_ids" --argjson base "$_base" '
+            def t: .title.english // .title.userPreferred // .title.romaji;
+            def avail: if .nextAiringEpisode then .nextAiringEpisode.episode - 1 else (.episodes // 0) end;
+            def mon: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][. - 1];
+            def when: .startDate | if .year == null then "date TBA" elif .month == null then "\(.year)"
+                elif .day == null then "\(.month | mon) \(.year)" else "\(.month | mon) \(.day), \(.year)" end;
+            def kind: {TV: "season", TV_SHORT: "season", ONA: "ONA", OVA: "OVA", MOVIE: "movie",
+                SPECIAL: "special"}[.format // ""] // "anime";
+            .data.Page.media[] as $m | ($m | t) as $mt
+            | ($hist[$m.id | tostring]) as $w
+            | ($fresh | index($m.id) != null) as $isnew
+            # episodes out when following are not news; on the first check remember how many
+            | (if $isnew then ["base", $m.id, ($m | avail)] else empty end),
+              (if ($isnew | not) and $w != null and $w > 0 and ($m | avail) > $w and ($m | avail) > ($base[$m.id | tostring] // 0) then
+                  ["ep", $m.id, $m.idMal, ($m | avail), $mt, $w + 1,
+                   "\($mt): new episodes \($w + 1)-\($m | avail) out (\($m.status | ascii_downcase))"]
+               else empty end),
+              ($m.relations.edges[]
+               | select(.node.type == "ANIME" and .node.status != "CANCELLED")
+               | select(.relationType == "SEQUEL" or
+                   (.relationType == "SIDE_STORY" and (.node.format | IN("MOVIE", "SPECIAL", "OVA", "ONA", "TV_SHORT"))))
+               | .relationType as $rt | .node as $n
+               | select($hist[$n.id | tostring] == null and ($known | index($n.id)) == null and ($fol | index($n.id)) == null)
+               # first check after following: extras that are already out count as known
+               | if $isnew and $rt != "SEQUEL" and $n.status == "FINISHED" then
+                     ["known", $n.id]
+                 elif $n.status == "NOT_YET_RELEASED" then
+                     ["soon", $n.id, ($n.idMal // 0), 0, ($n | t), 1, "\($mt): new \($n | kind) announced (\($n | when)) - \($n | t)"]
+                 elif $n.idMal == null then empty
+                 elif $n.status == "RELEASING" then
+                     ["new", $n.id, $n.idMal, ($n | avail), ($n | t), 1, "\($mt): new \($n | kind) airing, \($n | avail) eps out - \($n | t)"]
+                 else
+                     ["new", $n.id, $n.idMal, ($n | avail), ($n | t), 1, "\($mt): new \($n | kind) out - \($n | t)"]
+                 end)
+            | map(tostring) | join("\t")')
+"
+        printf '%s' "$_r" | jq -e '.data.Page.pageInfo.hasNextPage' >/dev/null || break
+        _p=$((_p + 1))
+    done
+    printf '%s' "$_out" | awk -F '\t' '$1 == "known" { print $2 }' >>"$known_file"
+    printf '%s' "$_out" | awk -F '\t' '$1 != "known" && $1 != "base" && NF > 1 && !seen[$2]++' >"$news_file"
+    printf '%s' "$_out" | awk -F '\t' -v OFS='\t' '
+        NR == FNR { if ($1 == "base") b[$2] = $3; next }
+        { $3 = 1; if ($1 in b) $4 = b[$1]; print }' - "$follow_file" >"$follow_file.tmp" && mv "$follow_file.tmp" "$follow_file"
+    date +%F >"$news_day_file"
+}
+
+# Once a day, check news when the start menu opens.
+auto_news() {
+    [ -s "$follow_file" ] || return 0
+    [ "$(cat "$news_day_file" 2>/dev/null)" = "$(date +%F)" ] && return 0
+    check_news || { info "Could not check news (AniList down?). Try n later."; date +%F >"$news_day_file"; }
+}
+
+# Returns 0 when something was picked to watch.
+news_menu() {
+    [ -s "$follow_file" ] || { info "You're not following any anime yet (see f)."; return 1; }
+    check_news || return 1
+    while :; do
+        [ -s "$news_file" ] || { info "Nothing new."; return 1; }
+        printf '\n\033[1;35mNews\033[0m\n' >&2
+        awk -F '\t' '{ printf "\033[1;36m%3d\033[0m %s\n", NR, $7 }' "$news_file" >&2
+        _in=$(prompt "Number to open (Enter goes back): ")
+        case "$_in" in '' ) return 1 ;; *[!0-9]*) continue ;; esac
+        _l=$(sed -n "${_in}p" "$news_file"); [ -n "$_l" ] || continue
+        _kind=$(printf '%s' "$_l" | cut -f1) _id=$(printf '%s' "$_l" | cut -f2)
+        _t=$(printf '%s' "$_l" | cut -f5)
+        case "$_kind" in
+            ep) _o="watch	watch from episode $(printf '%s' "$_l" | cut -f6)
+unfollow	stop following $_t" ;;
+            new) _o="watch	watch $_t
+list	add to watchlist
+dismiss	dismiss (don't show again)" ;;
+            *) _o="list	add to watchlist
+dismiss	dismiss (don't show again)" ;;
+        esac
+        _a=$(printf '%s\nback\tback\n' "$_o" | menu "$_t: " | cut -f1)
+        case "$_a" in
+            watch)
+                anilist_id=$_id mal_id=$(printf '%s' "$_l" | cut -f3)
+                ep_count=$(printf '%s' "$_l" | cut -f4) title=$_t
+                remove_line "$news_file" "$_l"
+                if [ "$_kind" = ep ]; then ep=$(printf '%s' "$_l" | cut -f6); return 0; fi
+                select_episode && return 0
+                ;;
+            list) watchlist_add "$_t"; remove_line "$news_file" "$_l" ;;
+            dismiss) printf '%s\n' "$_id" >>"$known_file"; remove_line "$news_file" "$_l" ;;
+            unfollow)
+                remove_line "$follow_file" "$(grep "^$_id	" "$follow_file")"
+                remove_line "$news_file" "$_l"; info "Stopped following $_t."
+                ;;
+        esac
+    done
 }
 
 # ---------- after-play menu ----------
@@ -590,6 +864,7 @@ loop_menu() {
 mode	switch to $([ "$mode" = sub ] && echo dub || echo sub)
 quality	change quality (now: $quality)
 search	search another anime
+start	start menu (watchlist, news...)
 quit	quit"
         _c=$(printf '%s\n' "$_opts" | menu "Playing ep $ep/$ep_count of $title ($mode): " | cut -f1)
         case "$_c" in
@@ -603,7 +878,13 @@ quit	quit"
                     menu "Quality: " | cut -f1)
                 [ -z "$quality" ] && quality=best
                 ;;
-            search) query=""; search_and_pick; select_episode || continue ;;
+            search)
+                query=""; search_and_pick; _rc=$?
+                [ $_rc -eq 2 ] && pause_for_menu
+                [ $_rc -eq 0 ] || continue
+                select_episode || continue
+                ;;
+            start) start_menu ;;
             quit | '') exit 0 ;;
         esac
         play_and_pause
@@ -612,7 +893,11 @@ quit	quit"
 
 # fzf takes over the screen, so keep an error visible until it has been read.
 play_and_pause() {
-    play_episode && return
+    play_episode && { offer_follow; return; }
+    pause_for_menu
+}
+
+pause_for_menu() {
     printf '\033[1;33mPress Enter for the menu.\033[0m' >&2
     read -r _ </dev/tty
 }
@@ -861,6 +1146,8 @@ Options:
   -q, --quality Q       best | worst | 1080 | 720 | 480 | 360
   -D, --download        download instead of playing; episodes after the title
                         (N, N-M, N- or all) or asked for, e.g. kari -D frieren 1-12
+  -w, --watchlist [NAME] add NAME to the watchlist, or open the watchlist
+  -n, --news            check followed anime for new seasons, movies, episodes
   -o, --output DIR      download folder (default: VLC's folder at /mnt/vlc on iSH)
   -s, --sub-lang LANG   subtitle language label (default: English, "none" to disable)
   -p, --player P        iSH | mpv | vlc | link  (default: auto)
@@ -871,8 +1158,13 @@ Options:
   -V, --version         print version
   -h, --help            show this help
 
+With no query, kari opens the start menu: continue watching, watchlist,
+following and news, or type a name to search.
+
 Examples:
+  kari
   kari frieren
+  kari -w "dandadan"
   kari -d -e 5 "one piece"
   kari -c
 EOF
@@ -882,6 +1174,7 @@ EOF
 trap cleanup EXIT
 trap 'exit 1' INT TERM HUP
 query="" start_ep="" do_continue="" download="" download_eps="" dl_dir="${KARI_DOWNLOAD_DIR:-}"
+want_watchlist="" want_news="" from_watchlist="" asked_follow=""
 nargs=0 last_arg=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -892,6 +1185,8 @@ while [ $# -gt 0 ]; do
         -s | --sub-lang) [ -n "$2" ] || die "-s needs a value"; sub_lang="$2"; shift ;;
         -p | --player) [ -n "$2" ] || die "-p needs a value"; player="$2"; shift ;;
         -D | --download) download=1 ;;
+        -w | --watchlist) want_watchlist=1 ;;
+        -n | --news) want_news=1 ;;
         -o | --output) [ -n "$2" ] || die "-o needs a folder"; dl_dir="$2"; shift ;;
         --delete-history) rm -f "$hist_file"; info "History deleted."; exit 0 ;;
         -u | --update) update_script main ;;
@@ -919,10 +1214,18 @@ if [ -n "$download" ]; then
     fi
 fi
 
-if [ -n "$do_continue" ]; then
-    continue_history
+if [ -n "$want_watchlist" ] && [ -n "$query" ]; then
+    watchlist_add "$query"; exit 0
+elif [ -n "$want_watchlist" ]; then
+    watchlist_menu || exit 0
+elif [ -n "$want_news" ]; then
+    news_menu || exit 0
+elif [ -n "$do_continue" ]; then
+    continue_history || exit 0
+elif [ -z "$query" ] && [ -z "$download" ]; then
+    start_menu
 else
-    search_and_pick
+    search_and_pick || exit 1
     if [ -n "$download" ]; then :
     elif [ -n "$start_ep" ]; then ep="$start_ep"; else select_episode || exit 0; fi
 fi

@@ -1,12 +1,12 @@
 #!/bin/sh
-# kari (iOS / iSH edition)
+# isekari: kari for iOS (iSH)
 # Stream anime from the terminal on iPhone / iPad (iSH) and watch it in VLC.
 # A POSIX-shell port of the anime flow of kari (https://github.com/dhairya3391/kari):
 #   AniList search -> Megaplay embed (by MAL id) -> AES token decrypt -> signed HLS
 # VLC for iOS cannot send the Referer header the CDN requires, so on iSH the
 # stream is played through a tiny local proxy (busybox nc + a shell handler) that adds it.
 
-version_number="2.0.0"
+version_number="2.0.1"
 
 # ---------- configuration (override with environment variables) ----------
 mode="${KARI_MODE:-sub}"                    # sub | dub
@@ -626,7 +626,7 @@ start_menu() {
     while :; do
         _recent=$(recent_entries) _nr=0
         screen
-        printf '\033[1;35mkari %s\033[0m\n' "$version_number" >&2
+        printf '\033[1;35misekari %s\033[0m\n' "$version_number" >&2
         if [ -n "$_recent" ]; then
             _nr=$(printf '%s\n' "$_recent" | grep -c .)
             printf '%s\n' "$_recent" | awk -F '\t' '{
@@ -732,7 +732,7 @@ following_menu() {
             awk -F '\t' '{ printf "\033[1;36m%3d\033[0m %s\n", NR, $2 }' "$follow_file" >&2
         else
             printf '\033[1;35mFollowing: nothing yet.\033[0m\n' >&2
-            info "  kari asks after the last episode, or add one from your history with a."
+            info "  isekari asks after the last episode, or add one from your history with a."
         fi
         _in=$(prompt "Type a name to search and follow, a to add from history, d+number to stop following (d2), Enter goes back: ")
         case "$_in" in
@@ -1061,7 +1061,7 @@ download_episode() { # EP
                 _wait=$((_wait * 2)); [ $_wait -lt 15 ] && _wait=15; [ $_wait -gt 120 ] && _wait=120
                 dl_parallel=1 _par=""
                 printf '\n' >&2
-                info "  The video server asks kari to slow down; waiting ${_wait}s..."
+                info "  The video server asks isekari to slow down; waiting ${_wait}s..."
                 sleep $_wait
                 _waited=$((_waited + _wait)) _i=$_bs
             else
@@ -1136,7 +1136,7 @@ test_proxy() {
     head -c 800000 /dev/urandom >"$_tw/big.ts"
     start_server "$_tw" "$_tp" "$_tlog"
     sleep 2
-    info "kari $version_number, $(busybox 2>&1 | head -n 1), $(uname -sm)"
+    info "isekari $version_number, $(busybox 2>&1 | head -n 1), $(uname -sm)"
     (sleep 3; head -c 800000 /dev/urandom >"$_tw/1/late.ts.part" && mv "$_tw/1/late.ts.part" "$_tw/1/late.ts") &
     for _t in small.txt big.ts 1/late.ts; do
         _r=$(curl -s --max-time 15 -o /dev/null -w '%{http_code} %{size_download} %{time_total}' "http://127.0.0.1:$_tp/$_t")
@@ -1158,18 +1158,18 @@ update_script() { # BRANCH
     [ ${#_ref} -eq 40 ] || _ref=$1
     _url="https://raw.githubusercontent.com/$repo/$_ref/kari"
     _new=$(curl -sfL --max-time 60 "$_url") || die "Could not download update from $_url"
-    printf '%s' "$_new" | head -n 1 | grep -q '^#!/bin/sh' || die "Downloaded file does not look like kari."
+    printf '%s' "$_new" | head -n 1 | grep -q '^#!/bin/sh' || die "Downloaded file does not look like isekari."
     _self=$(command -v "$0" 2>/dev/null || printf '%s' "$0")
-    if printf '%s\n' "$_new" | cmp -s - "$_self"; then info "kari is already up to date ($version_number, $1 branch)."; exit 0; fi
+    if printf '%s\n' "$_new" | cmp -s - "$_self"; then info "isekari is already up to date ($version_number, $1 branch)."; exit 0; fi
     printf '%s\n' "$_new" >"$_self.new" && chmod +x "$_self.new" && mv "$_self.new" "$_self" ||
         die "Could not write $_self (try running with sudo / as root)."
-    info "kari updated: $(sed -n 's/^version_number="\(.*\)"/\1/p' "$_self") ($1 branch)"
+    info "isekari updated: $(sed -n 's/^version_number="\(.*\)"/\1/p' "$_self") ($1 branch)"
     exit 0
 }
 
 usage() {
     cat <<EOF
-kari $version_number - stream anime in VLC from the terminal (iPhone / iPad via iSH)
+isekari $version_number - stream anime in VLC from the terminal (iPhone / iPad via iSH)
 
 Usage: kari [options] [query]
 
@@ -1187,13 +1187,13 @@ Options:
   -s, --sub-lang LANG   subtitle language label (default: English, "none" to disable)
   -p, --player P        iSH | mpv | vlc | link  (default: auto)
       --delete-history  clear watch history
-  -u, --update          update kari to the latest version (main branch)
+  -u, --update          update isekari to the latest version (main branch)
   -U, --update-test     install the test version ($test_branch branch); -u goes back
       --test-proxy      check which local proxy responses work on this device
   -V, --version         print version
   -h, --help            show this help
 
-With no query, kari opens the start menu: continue watching, watchlist,
+With no query, isekari opens the start menu: continue watching, watchlist,
 following and news, or type a name to search.
 
 Examples:

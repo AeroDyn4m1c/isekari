@@ -1,5 +1,5 @@
 #!/bin/sh
-# kari installer for iSH (iPhone / iPad). Also works on Alpine / other Linux.
+# isekari installer for iSH (iPhone / iPad). Also works on Alpine / other Linux.
 #   curl -sL https://raw.githubusercontent.com/AeroDyn4m1c/isekari/main/install.sh | sh
 
 repo="${KARI_REPO:-AeroDyn4m1c/isekari}"
@@ -17,7 +17,7 @@ missing=""
 for d in curl jq openssl; do
     command -v "$d" >/dev/null 2>&1 || missing="$missing $d"
 done
-# kari's local server for VLC uses busybox nc -e (part of iSH's base system)
+# isekari's local server for VLC uses busybox nc -e (part of iSH's base system)
 if command -v apk >/dev/null 2>&1 && ! busybox nc --help 2>&1 | grep -q 'persistent server'; then
     missing="$missing busybox"
 fi
@@ -26,10 +26,10 @@ if [ -n "$missing" ]; then
     echo "Try: apk update && apk add$missing"
     exit 1
 fi
-command -v fzf >/dev/null 2>&1 || echo "Note: fzf is not installed, kari will use numbered menus instead."
+command -v fzf >/dev/null 2>&1 || echo "Note: fzf is not installed, isekari will use numbered menus instead."
 
 mkdir -p "$dest"
-echo "Downloading kari to $dest/kari..."
+echo "Downloading isekari to $dest/kari..."
 curl -sfL "https://raw.githubusercontent.com/$repo/main/kari" -o "$dest/kari" || { echo "Download failed."; exit 1; }
 chmod +x "$dest/kari"
 echo "Done! Run: kari"

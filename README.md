@@ -59,7 +59,7 @@ kari -h              # all options
 ```
 
 1. Pick the anime and the episode. Type to filter, then tap the item or press Enter.
-2. Wait for **"Ready: first segment ..."**. kari checks that the video really comes through before it shows the link.
+2. Wait for **"Ready: first segment ..."**. isekari checks that the video really comes through before it shows the link.
 3. **Tap the green "Tap here to open in VLC" box.** VLC opens and starts playing, with English subtitles in sub mode.
 4. When you're done, switch back to iSH and press **Enter**, then choose **next**, **replay**, **previous**, **select**, **switch to dub/sub**, **quality**, **search**, **start menu** or **quit**.
 
@@ -82,19 +82,19 @@ kari -c -D 6-10          # more of an anime from your history
 kari -D -o ~/videos frieren 1-3   # save somewhere else
 ```
 
-You always pick the season (AniList lists each season separately) before kari downloads. The episodes go after the title; if a title itself ends in a number, put it in quotes: `kari -D "mob psycho 100" 3`.
+You always pick the season (AniList lists each season separately) before isekari downloads. The episodes go after the title; if a title itself ends in a number, put it in quotes: `kari -D "mob psycho 100" 3`.
 
 Each episode is saved as `<title> - Episode 05 (sub).mkv`, with the subtitles inside the file. A 24-minute episode is about 180-250 MB.
 
-**One-time setup: connect VLC's folder to iSH.** Downloads go to `/mnt/vlc`, which kari expects to be VLC's own folder, so they show up straight in VLC's library:
+**One-time setup: connect VLC's folder to iSH.** Downloads go to `/mnt/vlc`, which isekari expects to be VLC's own folder, so they show up straight in VLC's library:
 
 ```sh
 mkdir -p /mnt/vlc && mount -t ios . /mnt/vlc
 ```
 
-In the window that opens, pick **On My iPhone** (or **On My iPad**) › **VLC**. iSH may forget this after it restarts; kari tells you when to run the `mount` line again.
+In the window that opens, pick **On My iPhone** (or **On My iPad**) › **VLC**. iSH may forget this after it restarts; isekari tells you when to run the `mount` line again.
 
-**For .mkv files, install ffmpeg once:** `apk add ffmpeg` (about 100 MB). Without it, kari saves a `.ts` video with a separate `.vtt` subtitle file next to it.
+**For .mkv files, install ffmpeg once:** `apk add ffmpeg` (about 100 MB). Without it, isekari saves a `.ts` video with a separate `.vtt` subtitle file next to it.
 
 Downloading needs iSH to keep running, like playing does: keep it open, or allow location access (see above) and switch to other apps. If a download is interrupted, run the same command again: it continues where it stopped, and skips episodes that are already saved.
 
@@ -116,8 +116,8 @@ Number, letter, or an anime name to search (Enter quits):
 - **A number** plays the next episode of that anime. The list shows the 5 most recent ones you haven't finished.
 - **Type a name** and press Enter to search, the same as `kari <name>`.
 - **w, the watchlist:** anime you want to watch. Type a name to add it, `d2` removes entry 2, and a number searches that entry as if you ran `kari <name>`, so you pick the season there. An entry leaves the watchlist once you start watching it.
-- **f, following:** when you start the last episode out, kari asks whether to follow that anime. In this list, type a name to search and follow any anime (also ones you watched outside kari), `a` adds one from your history, and `d2` stops following entry 2.
-- **n, news:** checks everything you follow in one request and lists only what's new: new episodes, new seasons, and movies, specials and OVAs. Unwatched seasons stay listed until you watch them or dismiss them. Movies and specials that already existed when you followed the anime don't count as news. If nothing changed, it says "Nothing new." kari also checks once a day by itself, the first time you open the start menu.
+- **f, following:** when you start the last episode out, isekari asks whether to follow that anime. In this list, type a name to search and follow any anime (also ones you watched outside isekari), `a` adds one from your history, and `d2` stops following entry 2.
+- **n, news:** checks everything you follow in one request and lists only what's new: new episodes, new seasons, and movies, specials and OVAs. Unwatched seasons stay listed until you watch them or dismiss them. Movies and specials that already existed when you followed the anime don't count as news. If nothing changed, it says "Nothing new." isekari also checks once a day by itself, the first time you open the start menu.
 - **h:** your whole history, the same as `kari -c`.
 
 ## How it works
@@ -129,11 +129,11 @@ kari follows the same anime pipeline as the original kari's AniCine provider:
 3. Ask Megaplay for the sources and decrypt the AES token with `openssl`, which yields the HLS playlist.
 4. Sign the CDN URL (HMAC-SHA256), as kari does.
 
-The stream's CDN refuses any request without a `Referer` header, and VLC for iOS can't send one. On iSH, kari therefore downloads the video segments itself (with the header), a little ahead of where VLC is, and serves them on `127.0.0.1:8642` with a tiny server (busybox `nc` running a shell script per request). VLC plays `http://127.0.0.1:8642/...`. When VLC asks for a part that isn't downloaded yet, for example after skipping ahead, the server waits for it instead of answering "not found", because VLC would treat that as the end of the video.
+The stream's CDN refuses any request without a `Referer` header, and VLC for iOS can't send one. On iSH, isekari therefore downloads the video segments itself (with the header), a little ahead of where VLC is, and serves them on `127.0.0.1:8642` with a tiny server (busybox `nc` running a shell script per request). VLC plays `http://127.0.0.1:8642/...`. When VLC asks for a part that isn't downloaded yet, for example after skipping ahead, the server waits for it instead of answering "not found", because VLC would treat that as the end of the video.
 
 A background job downloads the next ~80 seconds of video ahead of VLC, with the right headers and one connection per batch, because every new connection is slow inside iSH. Segments VLC has already played get deleted, so storage use stays small. All of this is why iSH has to stay alive in the background while VLC plays.
 
-On a normal Linux/macOS machine kari skips the proxy and starts `mpv` or `vlc` directly with the headers.
+On a normal Linux/macOS machine isekari skips the proxy and starts `mpv` or `vlc` directly with the headers.
 
 ## Settings
 
@@ -158,10 +158,10 @@ History is stored in `~/.local/state/kari/history`.
 
 ## Troubleshooting
 
-- **VLC opens but nothing plays / stops after a few seconds.** iSH was suspended. Allow location access for iSH (Settings → iSH → Location → **Always**), and don't force-close iSH while watching. To see what the proxy did, run `cat ~/.cache/kari/proxy.log` (every video segment kari downloaded) and `cat ~/.cache/kari/requests.log` (every request VLC made).
+- **VLC opens but nothing plays / stops after a few seconds.** iSH was suspended. Allow location access for iSH (Settings → iSH → Location → **Always**), and don't force-close iSH while watching. To see what the proxy did, run `cat ~/.cache/kari/proxy.log` (every video segment isekari downloaded) and `cat ~/.cache/kari/requests.log` (every request VLC made).
 - **"Can't connect to the video server"**: the video CDN did not answer within 20 seconds. Your Wi-Fi or internet provider may be blocking it; try another network.
-- **Skipping ahead pauses for a few seconds.** kari only downloads a little ahead of VLC, so after a skip it first downloads the new part; VLC waits and then continues.
-- **"Warning: test download through the proxy failed"**: kari still shows the VLC link, so try it. If VLC does not play, report the warning line together with `cat ~/.cache/kari/proxy.log`.
+- **Skipping ahead pauses for a few seconds.** isekari only downloads a little ahead of VLC, so after a skip it first downloads the new part; VLC waits and then continues.
+- **"Warning: test download through the proxy failed"**: isekari still shows the VLC link, so try it. If VLC does not play, report the warning line together with `cat ~/.cache/kari/proxy.log`.
 - **Slow to start.** Run `KARI_DEBUG=1 kari frieren` to see which step takes long. Lower quality (`kari -q 720 ...`) also buffers faster.
 - **"Episode N (dub) is not available"**: that episode has no dub yet. Switch to sub.
 - **"Could not download the first video segments"**: the video server didn't deliver the start of the episode within 2 minutes. `proxy.log` shows the curl error for each segment.

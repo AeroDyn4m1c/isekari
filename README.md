@@ -48,7 +48,8 @@ kari -d one piece    # English dub
 kari -e 5 frieren    # start at episode 5
 kari -c              # continue watching (history)
 kari -D frieren 1-12 # download episodes 1-12 (see "Download for offline")
-kari -U              # update kari
+kari -u              # update kari
+kari -U              # install the test version (v2 branch); kari -u goes back
 kari -h              # all options
 ```
 
@@ -139,7 +140,7 @@ History is stored in `~/.local/state/kari/history`.
 - **"Could not download the first video segments"**: the video server didn't deliver the start of the episode within 2 minutes. `proxy.log` shows the curl error for each segment.
 - **"Local proxy failed to start"**: another program is using the port. Run `KARI_PORT=8700 kari`. `kari --test-proxy` checks what the local server can serve on your device.
 - **Nothing tappable appears**: update iSH. Older versions don't support terminal links.
-- **Search or playback suddenly stops working**: the upstream site probably changed. Run `kari -U` to get the latest fixes.
+- **Search or playback suddenly stops working**: the upstream site probably changed. Run `kari -u` to get the latest fixes.
 
 ## Credits
 

@@ -2,7 +2,7 @@
 
 Stream anime on your **iPhone / iPad** from the terminal and watch it in **VLC**, no Mac and no downloading needed.
 
-The command is still `kari`: isekari is kari, transported to another world (your iPad).
+The command is `kari`: isekari is kari, transported to another world (your device).
 
 It's a POSIX-shell port of the anime part of [kari](https://github.com/dhairya3391/kari), made to run in [iSH](https://ish.app) the same way [ani-cli](https://github.com/pystardust/ani-cli) used to.
 
